@@ -1,0 +1,713 @@
+---
+title: "Full Study Data Analysis"
+date: '2023-09-07'
+output: 
+  html_document:
+    toc: true
+    toc_depth: 5
+    number_sections: true
+    toc_float: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+```
+
+Load data
+```{r}
+
+rating <- read.csv('data/ratings_with_change.csv')
+applicant <- read.csv('data/applications.csv')
+IAT <- read.csv('data/IAT_score.csv')
+time <- read.csv('data/focus_time_with_change.csv')
+
+```
+
+
+Combine datasets 
+```{r}
+df <- merge(rating, applicant, by.x='applicant_id', by.y='id')
+
+df <- merge(df, time, by=c("user_id", "applicant_id"))
+
+df <- merge(df, IAT, by="user_id")
+
+```
+
+
+Check distribution
+```{r}
+t1 <- df %>%
+  group_by(user_id) %>%
+  summarize(min = (min(total_before)),
+            max = (max(total_before)),
+            mean = mean(total_before))
+summary(t1)
+```
+```{r}
+t1 <- t1 %>%
+  summarise(mean_min=mean(min),
+            mean_max=mean(max),
+            mean_mean=mean(mean))
+t1
+```
+
+
+```{r}
+t2 <- df %>%
+  group_by(user_id) %>%
+  summarize(min = (min(rating_before)),
+            max = (max(rating_before)),
+            mean = mean(rating_before))
+summary(t2)
+```
+
+
+```{r}
+t2 <- t2 %>%
+  summarise(mean_min=mean(min),
+            mean_max=mean(max),
+            mean_mean=mean(mean))
+t2
+```
+
+
+
+# Data process: normalize by participant
+
+Define normalization function
+```{r}
+norm <- function(x) {
+  min <- min(x)
+  max <- max(x)
+  r <- max-min 
+  norm_x <- 0
+  if (r==0) {
+    # if all numbers in x are 0, norm_x = 0
+  } 
+  else {
+    #else norm_x = (x - min)/(max - min)
+    for (i in 1:length(x)) {
+      norm_x[i]<- (x[i] - min)/r
+    }
+  }
+  return(norm_x)
+}
+```
+
+
+## Rating
+```{r}
+for (i in unique(df$user_id)) {
+  df[df$user_id==i, 'norm_rating_before'] <- norm(df[df$user_id==i, ]$rating_before)
+  df[df$user_id==i, 'norm_rating_after'] <- norm(df[df$user_id==i, ]$rating_after)
+  df[df$user_id==i, 'norm_rating_change'] <- norm(df[df$user_id==i, ]$rating_change)
+}
+```
+
+
+## Total Focus Time
+```{r}
+for (i in unique(df$user_id)) {
+  df[df$user_id==i, 'norm_total_before'] <- norm(df[df$user_id==i, ]$total_before)
+  df[df$user_id==i, 'norm_total_after'] <- norm(df[df$user_id==i, ]$total_after)
+  df[df$user_id==i, 'norm_total_change'] <- norm(df[df$user_id==i, ]$total_change)
+}
+```
+
+
+
+```{r}
+write.csv(df,'full_study_processed.csv')
+```
+
+
+# H1
+Applicants’ gender and race will impact their evaluations
+
+
+```{r}
+h1 <- df
+```
+
+
+## H1.1
+Female and non-binary applicants will get less review time than male applicants.\
+
+### Delta Mean Time
+Mean focus time (after normalization) by gender:\
+Female	0.2870896				\ 
+Male	0.3657257			\ 
+Non-binary	0.3812948	\	
+
+
+Delta mean time (M-F) is 0.07863, p-value=0.00167\
+Delta mean time (M-NB) is -0.01556, p-value=0.5473
+
+```{r}
+r1<- h1 %>%
+  group_by(GENDER) %>%
+  summarise(aver_time = mean(norm_total_before))
+r1
+
+print(paste0('Delta mean time (M-F) is ', r1[2,2]-r1[1,2]))
+print(paste0('Delta mean time (M-NB) is ', r1[2,2]-r1[3,2]))
+```
+
+### t-test
+```{r}
+# T-test: whether true difference exists
+
+# Male & Female
+t.test(h1[h1$GENDER=='Male',]$norm_total_before, h1[h1$GENDER=='Female',]$norm_total_before, var.equal=FALSE)
+# Male & non-binary
+t.test(h1[h1$GENDER=='Male',]$norm_total_before, h1[h1$GENDER=='Non-binary',]$norm_total_before, var.equal=FALSE)
+
+```
+
+
+### Graph
+
+Bootstrapping CI
+
+```{r}
+set.seed(10)
+M <- 10000
+# Empty matrix to save the values
+delta_m <- matrix(NA, M)
+delta_f <- matrix(NA, M)
+delta_nb <- matrix(NA, M)
+
+for(i in 1:M){
+  resample <- h1[sample(nrow(h1), replace = T),]
+  boots_time_m <- mean(resample[resample$GENDER=='Male',]$norm_total_before)
+  boots_time_f <- mean(resample[resample$GENDER=='Female',]$norm_total_before)
+  boots_time_nb <- mean(resample[resample$GENDER=='Non-binary',]$norm_total_before)
+  delta_m[i] <- boots_time_m
+  delta_f[i] <- boots_time_f
+  delta_nb[i] <- boots_time_nb
+}
+
+se_m <- sd(delta_m)
+se_f <- sd(delta_f)
+se_nb <- sd(delta_nb)
+
+q_val <- qt(0.95, M-1)
+r1[r1$GENDER == 'Male', 'low_CI'] <- mean(delta_m) - q_val*se_m
+r1[r1$GENDER == 'Female', 'low_CI'] <- mean(delta_f) - q_val*se_f
+r1[r1$GENDER == 'Non-binary', 'low_CI'] <- mean(delta_nb) - q_val*se_nb
+
+r1[r1$GENDER == 'Male', 'high_CI'] <- mean(delta_m) + q_val*se_m
+r1[r1$GENDER == 'Female', 'high_CI'] <- mean(delta_f) + q_val*se_f
+r1[r1$GENDER == 'Non-binary', 'high_CI'] <- mean(delta_nb) + q_val*se_nb
+
+r1
+```
+
+
+
+```{r}
+h11<-ggplot()+
+  geom_point(data=r1, aes(y=GENDER, x=aver_time, color=GENDER), size=3)+
+  geom_text(data=r1, aes(label=format(round(aver_time, 3), nsmall=3), 
+                         x=aver_time, y=GENDER),hjust=0.5, vjust=-1)+
+  geom_errorbar(data=r1, aes(x=aver_time,y=GENDER, xmin = low_CI, xmax = high_CI, 
+                             color=GENDER), width=0.3)+
+  geom_point(data=h1, aes(y=GENDER, x=norm_total_before, color=GENDER),
+             size=1, alpha=0.1)+
+  labs(y="Gender", x="Average Review Time")+
+  theme_bw()+
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"))+
+  theme(axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=12),
+        legend.text=element_text(size=12),
+        text = element_text(size = 14),legend.position="top")
+h11
+ggsave(file="H1.1.pdf", width=5, height=3.5)
+
+```
+
+
+## H1.2. 
+Black applicants will get less review time than white applicants. \
+
+### Delta Mean Time
+
+Mean focus time (after normalization) by race:\
+Black	0.3552549			\
+White	0.3340815		\
+
+Delta mean time (W-B) is -0.02117, p-value=0.3047.
+
+```{r}
+r2<- h1 %>%
+  group_by(RACE) %>%
+  summarise(aver_time = mean(norm_total_before))
+r2
+
+print(paste0('Delta mean time (W-B) is ', r2[2,2]-r2[1,2]))
+```
+
+
+### t-test
+```{r}
+# T-test: true difference exists
+
+t.test(h1[h1$RACE=='Black',]$norm_total_before, h1[h1$RACE=='White',]$norm_total_before, var.equal=FALSE)
+
+```
+
+
+
+
+### Graph
+
+Bootstrapping CI
+
+```{r}
+set.seed(10)
+M <- 10000
+# Empty matrix to save the values
+delta_b <- matrix(NA, M)
+delta_w <- matrix(NA, M)
+
+for(i in 1:M){
+  resample <- h1[sample(nrow(h1), replace = T),]
+  boots_time_w <- mean(resample[resample$RACE=='White',]$norm_total_before)
+  boots_time_b <- mean(resample[resample$RACE=='Black',]$norm_total_before)
+  delta_w[i] <- boots_time_w
+  delta_b[i] <- boots_time_b
+}
+
+se_w <- sd(delta_w)
+se_b <- sd(delta_b)
+
+q_val <- qt(0.95, M-1)
+r2[r2$RACE == 'White', 'low_CI'] <- mean(delta_w) - q_val*se_w
+r2[r2$RACE == 'Black', 'low_CI'] <- mean(delta_b) - q_val*se_b
+
+r2[r2$RACE == 'White', 'high_CI'] <- mean(delta_w) + q_val*se_w
+r2[r2$RACE == 'Black', 'high_CI'] <- mean(delta_b) + q_val*se_b
+
+r2
+```
+
+```{r}
+h12<-ggplot()+
+  geom_point(data=r2, aes(y=RACE, x=aver_time, color=RACE), size=3)+
+  geom_text(data=r2, aes(label=format(round(aver_time, 3), nsmall=3), 
+                         x=aver_time, y=RACE),hjust=0.5, vjust=-1)+
+  geom_errorbar(data=r2, aes(x=aver_time,y=RACE, xmin = low_CI, xmax = high_CI, 
+                             color=RACE), width=0.3)+
+  geom_point(data=h1, aes(y=RACE, x=norm_total_before, color=RACE),
+             size=1, alpha=0.1)+
+  labs(y="Race", x="Average Review Time")+
+  theme_bw()+
+  scale_color_manual(values = c("#52854C", "#4E84C4"))+
+  theme(axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=12),
+        legend.text=element_text(size=12),
+        text = element_text(size = 14),legend.position="top")
+h12
+ggsave(file="H1.2.pdf", width=4.5, height=3)
+
+```
+
+
+
+
+## H1.3
+Female and non-binary applicants will be rated lower than their equally-competent male counterparts.\
+
+### Delta Mean Rating
+Meaning rating (after normalization) by gender:\
+Female	0.5236511				\
+Male	0.541660			\
+Non-binary	0.5335028	\
+\
+Delta mean rating (M-F) is 0.01800, p-value=0.5394\
+Delta mean rating (M-NB) is 0.00815, p-value=0.7836
+
+```{r}
+# calculate the mean ratings by gender
+r3<- h1 %>%
+  group_by(GENDER) %>%
+  summarise(aver_rating = mean(norm_rating_before))
+r3
+
+print(paste0('Delta mean rating (M-F) is ', r3[2,2]-r3[1,2]))
+print(paste0('Delta mean rating (M-NB) is ', r3[2,2]-r3[3,2]))
+```
+
+### t-test
+```{r}
+# T-test: whether true difference exists
+
+# Male & Female
+t.test(h1[h1$GENDER=='Male',]$norm_rating_before, h1[h1$GENDER=='Female',]$norm_rating_before, var.equal=FALSE)
+# Male & non-binary
+t.test(h1[h1$GENDER=='Male',]$norm_rating_before, h1[h1$GENDER=='Non-binary',]$norm_rating_before, var.equal=FALSE)
+
+```
+
+
+
+### Graph
+
+Bootstrapping CI
+
+```{r}
+set.seed(10)
+M <- 10000
+# Empty matrix to save the values
+delta_m <- matrix(NA, M)
+delta_f <- matrix(NA, M)
+delta_nb <- matrix(NA, M)
+
+for(i in 1:M){
+  resample <- h1[sample(nrow(h1), replace = T),]
+  boots_ratings_m <- mean(resample[resample$GENDER=='Male',]$norm_rating_before)
+  boots_ratings_f <- mean(resample[resample$GENDER=='Female',]$norm_rating_before)
+  boots_ratings_nb <- mean(resample[resample$GENDER=='Non-binary',]$norm_rating_before)
+  delta_m[i] <- boots_ratings_m
+  delta_f[i] <- boots_ratings_f
+  delta_nb[i] <- boots_ratings_nb
+}
+
+se_m <- sd(delta_m)
+se_f <- sd(delta_f)
+se_nb <- sd(delta_nb)
+
+q_val <- qt(0.95, M-1)
+r3[r3$GENDER == 'Male', 'low_CI'] <- mean(delta_m) - q_val*se_m
+r3[r3$GENDER == 'Female', 'low_CI'] <- mean(delta_f) - q_val*se_f
+r3[r3$GENDER == 'Non-binary', 'low_CI'] <- mean(delta_nb) - q_val*se_nb
+
+r3[r3$GENDER == 'Male', 'high_CI'] <- mean(delta_m) + q_val*se_m
+r3[r3$GENDER == 'Female', 'high_CI'] <- mean(delta_f) + q_val*se_f
+r3[r3$GENDER == 'Non-binary', 'high_CI'] <- mean(delta_nb) + q_val*se_nb
+
+r3
+```
+
+```{r}
+h13<-ggplot()+
+  geom_point(data=r3, aes(y=GENDER, x=aver_rating, color=GENDER), size=3)+
+  geom_text(data=r3, aes(label=format(round(aver_rating, 3), nsmall=3), 
+                         x=aver_rating, y=GENDER),hjust=0.5, vjust=-1)+
+  geom_errorbar(data=r3, aes(x=aver_rating,y=GENDER, xmin = low_CI, xmax = high_CI, 
+                             color=GENDER), width=0.3)+
+  geom_point(data=h1, aes(y=GENDER, x=norm_rating_before, color=GENDER),
+             size=1, alpha=0.1)+
+  labs(y="Gender", x="Average Competitiveness Rating")+
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"))+
+  theme_bw()+
+  theme(axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=12),
+        legend.text=element_text(size=12),
+        text = element_text(size = 14),legend.position="top")
+h13
+ggsave(file="H1.3.pdf", width=4.5, height=3.5)
+
+```
+
+
+## H1.4
+
+Black applicants will be rated lower than their equally-competent white counterparts. \
+
+### Delta mean rating
+Meaning rating by race:\
+Black	0.5411733			\
+White	0.5246655	
+
+\
+Delta mean rating (W-B) is -0.01651, p-value= 0.4931\
+
+
+```{r}
+# calculate the mean ratings by gender
+r4<- h1 %>%
+  group_by(RACE) %>%
+  summarise(aver_rating = mean(norm_rating_before))
+r4
+print(paste0('Delta mean rating (W-B) is ', r4[2,2]-r4[1,2]))
+```
+
+### t-test
+```{r}
+# T-test: true difference exists
+
+t.test(h1[h1$RACE=='Black',]$norm_rating_before, h1[h1$RACE=='White',]$norm_rating_before, var.equal=FALSE)
+
+```
+
+
+### Graph
+
+Bootstrapping CI
+
+```{r}
+set.seed(10)
+M <- 10000
+# Empty matrix to save the values
+delta_b <- matrix(NA, M)
+delta_w <- matrix(NA, M)
+
+for(i in 1:M){
+  resample <- h1[sample(nrow(h1), replace = T),]
+  boots_ratings_b <- mean(resample[resample$RACE=='Black',]$norm_rating_before)
+  boots_ratings_w <- mean(resample[resample$RACE=='White',]$norm_rating_before)
+  delta_b[i] <- boots_ratings_b
+  delta_w[i] <- boots_ratings_w
+}
+
+se_b <- sd(delta_b)
+se_w <- sd(delta_w)
+
+q_val <- qt(0.95, M-1)
+r4[r4$RACE == 'White', 'low_CI'] <- mean(delta_w) - q_val*se_w
+r4[r4$RACE == 'Black', 'low_CI'] <- mean(delta_b) - q_val*se_b
+
+r4[r4$RACE == 'White', 'high_CI'] <- mean(delta_w) + q_val*se_w
+r4[r4$RACE == 'Black', 'high_CI'] <- mean(delta_b) + q_val*se_b
+
+r4
+```
+
+```{r}
+h14<-ggplot()+
+  geom_point(data=r4, aes(y=RACE, x=aver_rating, color=RACE), size=3)+
+  geom_text(data=r4, aes(label=format(round(aver_rating, 3), nsmall=3), 
+                         x=aver_rating, y=RACE),hjust=0.5, vjust=-1)+
+  geom_errorbar(data=r4, aes(x=aver_rating,y=RACE, xmin = low_CI, xmax = high_CI, 
+                             color=RACE), width=0.3)+
+  geom_point(data=h1, aes(y=RACE, x=norm_rating_before, color=RACE),
+             size=1, alpha=0.1)+
+  labs(y="Race", x="Average Competitiveness Rating")+
+  theme_bw()+
+  scale_color_manual(values = c("#52854C", "#4E84C4"))+
+  theme(axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=12),
+        legend.text=element_text(size=12),
+        text = element_text(size = 14),legend.position="top")
+h14
+ggsave(file="H1.4.pdf", width=4.5, height=3)
+
+```
+
+```{r}
+library(ggpubr)
+ggarrange(ggarrange(h11, h12,nrow=2, align = "v"), ggarrange(h13, h14,nrow=2,align = "v"),
+           ncol = 2)
+ggsave(file="H1_combined.pdf", width=10.5, height=5.5)
+```
+
+
+
+# H2
+Participants' review behavior (time spent) and decisions (ratings) will correlate with their implicit biases.
+
+```{r}
+h2 <- df
+```
+
+
+
+## H2.1 
+Participants with higher gender IAT scores will spend less time on female and non-binary applicants than male applicants. \
+
+New variable defined as:\
+`gender_time_diff1` = mean time on Male applicant - mean time on Female applicant\
+`gender_time_diff2` = mean time on Male applicant - mean time on Non-binary applicant\
+\
+
+Result: \
+- M & F: For linear regression gender_time_diff1 ~ IAT_Score_Gender, slope = -0.06915, p-value=4.52e-05. Higher IAT score, more equally time spent between male & female applicants\
+
+- M & N-B: For linear regression gender_time_diff2 ~ IAT_Score_Gender, slope = 0.06450, p-value = 0.000404 Higher IAT score, spend more time on male applicants than on non-binary applicants
+
+```{r}
+c1 <- h2 %>%
+  group_by(user_id, GENDER) %>%
+  summarise(gender_mean_time=mean(norm_total_before)) 
+
+
+for (i in 1:length(h2$user_id)) {
+  user = h2$user_id[i]
+  h2[h2$user_id==user, 'gender_time_diff1'] <- c1[c1$user_id==user & c1$GENDER=='Male', ]$gender_mean_time - c1[c1$user_id==user & c1$GENDER=='Female', ]$gender_mean_time
+  h2[h2$user_id==user, 'gender_time_diff2'] <- c1[c1$user_id==user & c1$GENDER=='Male', ]$gender_mean_time - c1[c1$user_id==user & c1$GENDER=='Non-binary', ]$gender_mean_time
+}
+```
+
+### Male & Female
+
+```{r}
+mod.1 <- lm(gender_time_diff1 ~ IAT_Score_Gender, h2, na.action=na.omit)
+summary(mod.1)
+```
+
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Gender,y=gender_time_diff1))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+### Male & Non-binary
+
+```{r}
+mod.2 <- lm(gender_time_diff2 ~ IAT_Score_Gender, h2, na.action=na.omit)
+summary(mod.2)
+```
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Gender,y=gender_time_diff2))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+## H2.2 
+Participants with higher race IAT scores will spend less time on black applicants than white applicants. \
+
+New variable defined as:\
+`race_time_diff` = mean time on White applicant - mean time on Black applicant\
+\
+
+Result: \
+- For linear regression race_time_diff ~ IAT_Score_Race, slope = 0.117167, p-value=3.20e-15. Higher IAT score, spend more time on white applicants than on Black applicants\
+
+```{r}
+c2 <- h2 %>%
+  group_by(user_id, RACE) %>%
+  summarise(race_mean_time=mean(norm_total_before)) 
+
+
+for (i in 1:length(h2$user_id)) {
+  user = h2$user_id[i]
+  h2[h2$user_id==user, 'race_time_diff'] <- c2[c2$user_id==user & c2$RACE=='White', ]$race_mean_time - c2[c2$user_id==user & c2$RACE=='Black', ]$race_mean_time
+}
+```
+
+
+```{r}
+mod.3 <- lm(race_time_diff ~ IAT_Score_Race, h2, na.action=na.omit)
+summary(mod.3)
+```
+
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Race,y=race_time_diff))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+
+## H2.3 
+Participants with higher gender IAT scores will give lower ratings to female and non-binary applicants than male applicants. 
+
+New variable defined as:\
+`gender_rating_diff1` = mean rating for Male applicant - mean rating for Female applicant\
+`gender_rating_diff2` = mean rating for Male applicant - mean rating for Non-binary applicant\
+\
+
+Result: \
+
+- M & F: For linear regression gender_rating_diff1 ~ IAT_Score_Gender, slope = -0.060320, p-value=1.38e-05. Higher IAT score, give higher ratings to female applicants than male applicants\
+
+- M & N-B: For linear regression gender_rating_diff2 ~ IAT_Score_Gender, slope = -0.033554, p-value = 0.002774. Higher IAT score, give higher ratings to non-binary applicants than male applicants
+
+```{r}
+c3 <- h2 %>%
+  group_by(user_id, GENDER) %>%
+  summarise(gender_mean_rating=mean(norm_rating_before)) 
+
+
+for (i in 1:length(h2$user_id)) {
+  user = h2$user_id[i]
+  h2[h2$user_id==user, 'gender_rating_diff1'] <- c3[c3$user_id==user & c3$GENDER=='Male', ]$gender_mean_rating - c3[c3$user_id==user & c3$GENDER=='Female', ]$gender_mean_rating
+  h2[h2$user_id==user, 'gender_rating_diff2'] <- c3[c3$user_id==user & c3$GENDER=='Male', ]$gender_mean_rating - c3[c3$user_id==user & c3$GENDER=='Non-binary', ]$gender_mean_rating
+}
+```
+
+### Male & Female
+
+```{r}
+mod.4 <- lm(gender_rating_diff1 ~ IAT_Score_Gender, h2, na.action=na.omit)
+summary(mod.4)
+```
+
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Gender,y=gender_rating_diff1))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+### Male & Non-binary
+
+```{r}
+mod.5 <- lm(gender_rating_diff2 ~ IAT_Score_Gender, h2, na.action=na.omit)
+summary(mod.5)
+```
+
+
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Gender,y=gender_rating_diff2))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+## H2.4 
+Participants with higher race IAT scores will give lower ratings to black applicants than white applicants. 
+
+New variable defined as:\
+`race_rating_diff` = mean rating on White applicants - mean rating on Black applicants\
+\
+
+Result: \
+For linear regression race_rating_diff ~ IAT_Score_Race, slope = 0.090419, p-value= <2e-16. Higher IAT score, give higher ratings to white applicants than black applicants\
+
+```{r}
+c4 <- h2 %>%
+  group_by(user_id, RACE) %>%
+  summarise(race_mean_rating=mean(norm_rating_before)) 
+
+
+for (i in 1:length(h2$user_id)) {
+  user = h2$user_id[i]
+  h2[h2$user_id==user, 'race_rating_diff'] <- c4[c4$user_id==user & c4$RACE=='White', ]$race_mean_rating - c4[c4$user_id==user & c4$RACE=='Black', ]$race_mean_rating
+}
+```
+
+
+```{r}
+mod.6 <- lm(race_rating_diff ~ IAT_Score_Race, h2, na.action=na.omit)
+summary(mod.6)
+```
+
+```{r}
+h2 %>%
+  ggplot(aes(x=IAT_Score_Race,y=race_rating_diff))+
+  geom_point()+
+  geom_smooth(method='lm')+
+  theme_bw()
+```
+
+
+
+
+
+
+
+
+

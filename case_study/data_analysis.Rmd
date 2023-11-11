@@ -1,0 +1,139 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+```
+
+## Time Spent Analysis
+```{r}
+df <- read.csv("focustime.csv") %>%
+  filter(GENDER=='M' | GENDER=='F') 
+df$GENDER[df$GENDER=='F'] <- 'Female'
+df$GENDER[df$GENDER=='M'] <- 'Male'
+df$user_id = sprintf('P%i', df$user_id)
+```
+
+
+
+```{r}
+norm <- function(x) {
+  min <- min(x)
+  max <- max(x)
+  r <- max-min 
+  norm_x <- 0
+  if (r==0) {
+    # if all numbers in x are 0, norm_x = 0
+  } 
+  else {
+    #else norm_x = (x - min)/(max - min)
+    for (i in 1:length(x)) {
+      norm_x[i]<- (x[i] - min)/r
+    }
+  }
+  return(norm_x)
+}
+```
+
+
+```{r}
+for (i in unique(df$user_id)) {
+  df[df$user_id==i, 'norm_time'] <- norm(df[df$user_id==i, ]$total_time)
+}
+```
+
+
+
+
+```{r}
+anova <- aov(norm_time~GENDER, data=df)
+TukeyHSD(anova)
+```
+```{r}
+anova <- aov(norm_time~RACE, data=df)
+TukeyHSD(anova)
+```
+
+
+```{r}
+r <- df %>%
+  group_by(user_id, GENDER) %>%
+  summarise(aver_time = mean(norm_time))
+```
+
+```{r}
+df %>%
+  ggplot(aes(x=norm_time, y=GENDER))+
+  geom_point(aes(color=GENDER),size=1.5, alpha=0.5)+
+  facet_wrap(.~factor(user_id, levels=c('P1', 'P3', 'P4', 'P5', 'P6', 
+                                      'P7', 'P9', 'P10', 'P11', 'P12')), 
+             nrow=5,strip.position = "right")+
+  geom_text(data=r, aes(label=format(round(aver_time, 3), nsmall=3), 
+                         x=aver_time, y=GENDER),hjust=0.5, vjust=-1)+
+  stat_summary(fun.y = mean, geom = "point",position = "dodge", aes(color=GENDER))+
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", aes(color=GENDER),
+               position = position_dodge(width = 0.90),width=.2)+
+  scale_color_manual(values = c("#00AFBB", "#E7B800"))+
+  theme_bw()+
+  theme(axis.text.x=element_text(size=12),
+        axis.text.y=element_text(size=12),
+        legend.text=element_text(size=12),
+        text = element_text(size = 14),legend.position="top",
+        strip.background = element_rect(color="black", fill="gray100"))+
+  labs(x="Time Spent", y="Gender")
+
+ggsave(file="focustime_by_user.pdf", width=9, height=6)
+```
+
+## Decision Analysis
+
+```{r}
+df <- read.csv('decisions.csv') %>% rename(Decision=decision)
+```
+
+```{r}
+df$GENDER[df$GENDER=='F'] <- 'Female'
+df$GENDER[df$GENDER=='M'] <- 'Male'
+df$GENDER[df$GENDER=='Unknown'] <- 'N/A'
+df$RACE[df$RACE=='OTHER'] <- 'N/A' 
+```
+
+
+```{r}
+df$Decision <- factor(df$Decision, levels=c("Admitted", "Waitlisted","Rejected"))
+```
+
+```{r}
+p1<-df%>%
+  ggplot(aes(x=fct_infreq(GENDER), fill=Decision))+
+  geom_bar(stat="count")+
+  scale_fill_manual(values = c("chartreuse3", "goldenrod1", "brown2"))+
+  labs(x="", y="Count")+
+  ggtitle("Gender")+
+  theme(plot.title = element_text(hjust =0))+
+  theme_minimal()
+p1
+```
+
+```{r}
+p2<-df%>%
+  ggplot(aes(x=fct_infreq(RACE), fill=Decision))+
+  geom_bar(stat="count")+
+  scale_fill_manual(values = c("chartreuse3", "goldenrod1", "brown2"))+
+  labs(x="", y="Count")+
+  ggtitle("Race")+
+  theme(plot.title = element_text(hjust =0))+
+  theme_minimal()
+p2
+```
+
+
+
+
+```{r}
+ggarrange(p1, p2, nrow=1, common.legend = TRUE, legend="right", widths=c(3.2,5), align='h')
+ggsave(file="decisions.pdf", width=9, height=5)
+```
+
+
+
